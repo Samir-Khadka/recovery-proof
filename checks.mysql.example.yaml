@@ -1,0 +1,27 @@
+# Recovery Proof restore sanity checks for MySQL (v0.2).
+#
+# Copy to checks.mysql.yaml and tune for YOUR database, then:
+#   python -m recovery_proof check --engine mysql --backup-file /backups/latest.sql --checks checks.mysql.yaml
+#
+# The SQL here is MySQL dialect — a Postgres checks file will NOT run
+# against MySQL (different date functions, different identifier quoting).
+# A check fails the whole run if a table has fewer rows than its minimum, a
+# custom query returns zero rows, a check raises, or an integrity check
+# fails. Skipped checks (e.g. dump verification, which has no MySQL
+# equivalent) are never a pass or a failure.
+
+# Per-table minimum row counts.
+tables:
+  users: 1
+  orders: 1
+
+# Custom SQL queries. Each must return at least one row to pass.
+queries:
+  - name: "recent orders exist"
+    sql: "SELECT 1 FROM orders WHERE created_at > NOW() - INTERVAL 7 DAY LIMIT 1"
+  - name: "users table present in schema"
+    sql: "SELECT 1 FROM information_schema.TABLES WHERE TABLE_NAME = 'users' LIMIT 1"
+
+# Database integrity checks (CHECK TABLE over every base table).
+integrity:
+  enabled: true

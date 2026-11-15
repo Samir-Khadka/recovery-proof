@@ -8,6 +8,7 @@ class FakeCursor:
     def __init__(self, handler):
         self.handler = handler
         self.executed: list[tuple[str, object]] = []
+        self.closed = False
 
     def __enter__(self):
         return self
@@ -18,6 +19,9 @@ class FakeCursor:
     def execute(self, sql, params=None):
         self.executed.append((sql, params))
         self._result = self.handler(sql, params)
+
+    def close(self):
+        self.closed = True
 
     def fetchone(self):
         kind, val = self._result

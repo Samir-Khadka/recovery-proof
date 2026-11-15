@@ -1,10 +1,13 @@
-"""Tests for checks-file loading and the row-count / SQL checks."""
+"""Tests for checks-file loading and the Postgres row-count / SQL checks."""
 import json
 
 import pytest
 
 from conftest import FakeConn, table_handler
-from recovery_proof.check import InfraError, load_checks, run_checks
+from recovery_proof.check import InfraError, load_checks
+from recovery_proof.engines.postgres import PostgresEngine
+
+ENGINE = PostgresEngine()
 
 
 def test_load_checks_yaml(tmp_path):
@@ -61,7 +64,7 @@ def test_load_checks_example_file():
 
 def test_run_checks_table_pass():
     conn = FakeConn(table_handler({"users": 10, "orders": 3}))
-    results = run_checks(conn, {"tables": {"users": 1, "orders": 1}, "queries": []})
+    results = ENGINE.run_checks(conn, {"tables": {"users": 1, "orders": 1}, "queries": []})
     assert all(r["passed"] for r in results)
     assert results[0]["detail"] == "10 rows (minimum 1)"
     assert conn.closed is False  # run_checks does not close the connection
@@ -69,21 +72,21 @@ def test_run_checks_table_pass():
 
 def test_run_checks_table_fail_below_minimum():
     conn = FakeConn(table_handler({"users": 0}))
-    results = run_checks(conn, {"tables": {"users": 1}, "queries": []})
+    results = ENGINE.run_checks(conn, {"tables": {"users": 1}, "queries": []})
     assert results[0]["passed"] is False
     assert "0 rows" in results[0]["detail"]
 
 
 def test_run_checks_table_error_recorded_not_raised():
     conn = FakeConn(table_handler({"users": RuntimeError("relation does not exist")}))
-    results = run_checks(conn, {"tables": {"users": 1}, "queries": []})
+    results = ENGINE.run_checks(conn, {"tables": {"users": 1}, "queries": []})
     assert results[0]["passed"] is False
     assert "relation does not exist" in results[0]["detail"]
 
 
 def test_run_checks_query_pass_and_fail():
     conn = FakeConn(table_handler({}, {"recent": [(1,)], "missing": []}))
-    results = run_checks(conn, {"tables": {}, "queries": [
+    results = ENGINE.run_checks(conn, {"tables": {}, "queries": [
         {"name": "recent", "sql": "SELECT 1 -- recent"},
         {"name": "missing", "sql": "SELECT 1 -- missing"},
     ]})
@@ -94,7 +97,7 @@ def test_run_checks_query_pass_and_fail():
 
 def test_run_checks_query_error_recorded():
     conn = FakeConn(table_handler({}, {"boom": RuntimeError("syntax error")}))
-    results = run_checks(conn, {"tables": {}, "queries": [
+    results = ENGINE.run_checks(conn, {"tables": {}, "queries": [
         {"name": "boom", "sql": "SELECT boom"},
     ]})
     assert results[0]["passed"] is False
@@ -103,6 +106,6 @@ def test_run_checks_query_error_recorded():
 
 def test_run_checks_quotes_weird_table_names():
     conn = FakeConn(table_handler({"we\"ird": 2}))
-    results = run_checks(conn, {"tables": {'we"ird': 1}, "queries": []})
+    results = ENGINE.run_checks(conn, {"tables": {'we"ird': 1}, "queries": []})
     assert results[0]["passed"] is True
     assert '"we""ird"' in conn.cursor_obj.executed[0][0]

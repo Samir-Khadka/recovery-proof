@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.2.0 — 2026-11-15
+
+- MySQL engine (`--engine mysql`): restores a mysqldump SQL backup into an
+  ephemeral `mysql:8.0` container, runs the same checks-file shape (table
+  row counts + custom SQL, MySQL dialect), and verifies integrity with
+  `CHECK TABLE` over every base table. The password travels via `MYSQL_PWD`,
+  never on a command line. Live-source dumps use `mysqldump
+  --single-transaction --routines --triggers`.
+- Refactor: the checker is now an engine-agnostic orchestrator
+  (`recovery_proof/check.py`) over an engine interface
+  (`recovery_proof/engines/`). Adding a database means adding an engine.
+  The Postgres engine is unchanged in behaviour; the dump-verification
+  check is now typed `"dump"` (the backup file itself) rather than
+  `"integrity"` (the restored database).
+- 85 unit tests + 2 real-Docker restore tests (Postgres + MySQL); CI on
+  Python 3.11 + 3.12.
+
 ## 0.1.1 — 2026-11-15
 
 - Fixed the amcheck check: it passed the index name as a quoted identifier

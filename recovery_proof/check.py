@@ -1,25 +1,21 @@
-"""Postgres restore checker (Recovery Proof v0.1).
+"""Restore checker (Recovery Proof v0.2) — engine-agnostic orchestrator.
 
-Restores a backup into an ephemeral Postgres container, runs integrity and
-sanity checks, records the measured restore time to an append-only history,
-and optionally reports to the Incident Copilot timeline and Telegram.
-
-Adapted from the Incident Copilot restore checker
-(https://github.com/Samir-Khadka/incident-copilot, restore/check.py).
-What is new here: the integrity checks (dump verification + amcheck), the
-local results history with a measured RTO, and a standalone CLI — no Copilot
-API required.
+The orchestrator acquires the backup, verifies the dump, starts an
+ephemeral container, restores, runs the checks, and records the result.
+Everything database-specific lives in an engine
+(``recovery_proof.engines``): Postgres in v0.1, MySQL in v0.2.
 
 Usage:
     python -m recovery_proof check --backup-file /backups/latest.dump --checks checks.yaml
+    python -m recovery_proof check --engine mysql --backup-file /backups/latest.sql --checks checks.mysql.yaml
     python -m recovery_proof check --source-url postgresql://user:pw@host/db --checks checks.yaml
     python -m recovery_proof report --system nightly
 
 Exit codes: 0 = all checks passed, 1 = restore or a check failed, 2 = infra/usage error.
 
-Host prerequisites: docker, postgresql-client (pg_dump/pg_restore/psql),
-python 3.11+ + requirements.txt. Never commit real credentials — pass them via
-env vars (.env is gitignored).
+Host prerequisites: docker, the engine's client tools (postgresql-client
+for Postgres, mysql-client for MySQL), python 3.11+ + requirements.txt.
+Never commit real credentials — pass them via env vars (.env is gitignored).
 """
 from __future__ import annotations
 
@@ -33,175 +29,45 @@ import subprocess
 import sys
 import tempfile
 import time
-import urllib.parse
 from datetime import datetime, timezone
 from pathlib import Path
 
-import psycopg
-
+from .engines import get_engine
+from .engines.base import CheckError, InfraError, redact_url
 from .events import (
     build_event_payload,
     maybe_notify_telegram,
     post_event,
 )
 from .history import append_result, default_results_path
-from .integrity import run_integrity_checks, verify_dump
 
 log = logging.getLogger("recovery-proof")
 
-POSTGRES_IMAGE = "postgres:16.4"
 READY_TIMEOUT_S = 120
 RESTORE_TIMEOUT_S = 900
 DUMP_TIMEOUT_S = 900
-STATEMENT_TIMEOUT_MS = 30_000
 
 EXIT_PASS = 0
 EXIT_FAIL = 1
 EXIT_INFRA = 2
 
-
-class CheckError(Exception):
-    """A restore/check failure (exit 1)."""
-
-
-class InfraError(Exception):
-    """Missing tooling or bad usage (exit 2)."""
-
-
-# ---------------------------------------------------------------- helpers
-def redact_url(url: str) -> str:
-    """Hide the password in a Postgres URL for logs.
-
-    A URL with no password is returned unchanged; only a present password
-    is replaced with ``***``. Unparseable input returns a marker.
-    """
-    try:
-        parts = urllib.parse.urlsplit(url)
-        if not parts.scheme:
-            return "<redacted-url>"
-        if "@" not in parts.netloc:
-            return url
-        userinfo, _, host = parts.netloc.partition("@")
-        if ":" not in userinfo:
-            return url
-        user, _, _ = userinfo.partition(":")
-        netloc = f"{user}:***@{host}"
-        return urllib.parse.urlunsplit(
-            (parts.scheme, netloc, parts.path, parts.query, parts.fragment)
-        )
-    except Exception:
-        pass
-    return "<redacted-url>"
-
-
-def run(cmd: list[str], **kw) -> subprocess.CompletedProcess:
-    """Run a command, capturing output. Never logs secrets (callers redact)."""
-    log.debug("exec: %s", " ".join(cmd[:2]) + " ...")
-    return subprocess.run(cmd, capture_output=True, text=True, **kw)
+__all__ = ["CheckError", "InfraError", "check_main", "load_checks",
+           "parse_check_args", "redact_url", "run_check"]
 
 
 def docker_available() -> bool:
     try:
-        p = run(["docker", "info"], timeout=15)
+        p = subprocess.run(["docker", "info"], capture_output=True, text=True, timeout=15)
         return p.returncode == 0
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
         return False
 
 
-def detect_format(path: Path) -> str:
-    """'custom' for pg_dump custom format (PGDMP magic), else 'plain' SQL."""
-    with open(path, "rb") as f:
-        magic = f.read(5)
-    return "custom" if magic == b"PGDMP" else "plain"
-
-
-# ---------------------------------------------------------------- container
-def start_container(image: str, password: str, name: str) -> tuple[str, int]:
-    """Start an ephemeral Postgres; return (host, port)."""
-    p = run(
-        [
-            "docker", "run", "-d", "--rm",
-            "--name", name,
-            "-e", f"POSTGRES_PASSWORD={password}",
-            "-p", "127.0.0.1::5432",
-            image,
-        ],
-        timeout=180,
-    )
-    if p.returncode != 0:
-        raise InfraError(f"docker run failed: {p.stderr.strip()[-500:]}")
-    p = run(["docker", "port", name, "5432"], timeout=15)
-    if p.returncode != 0:
-        raise InfraError(f"docker port failed: {p.stderr.strip()[-200:]}")
-    # e.g. "127.0.0.1:49153" (or "0.0.0.0:49153")
-    mapping = p.stdout.strip().splitlines()[-1]
-    host, _, port = mapping.rpartition(":")
-    return host or "127.0.0.1", int(port)
-
-
-def wait_ready(name: str, timeout_s: int = READY_TIMEOUT_S) -> None:
-    deadline = time.monotonic() + timeout_s
-    while time.monotonic() < deadline:
-        p = run(["docker", "exec", name, "pg_isready", "-U", "postgres"], timeout=10)
-        if p.returncode == 0:
-            return
-        time.sleep(2)
-    raise InfraError(f"postgres container {name} not ready after {timeout_s}s")
-
-
-def stop_container(name: str) -> None:
-    """Best-effort removal. Never raises — called from finally blocks."""
-    try:
-        run(["docker", "rm", "-f", name], timeout=30)
-    except Exception as e:  # noqa: BLE001 - cleanup must not mask the real error
-        log.warning("container cleanup failed for %s: %s", name, e)
-
-
-def restore_backup(
-    fmt: str,
-    path: Path,
-    host: str,
-    port: int,
-    password: str,
-    timeout_s: int = RESTORE_TIMEOUT_S,
-) -> None:
-    """Restore into the temp container. Raises CheckError on failure."""
-    env = {**os.environ, "PGPASSWORD": password}
-    base = ["--host", host, "--port", str(port), "--username", "postgres",
-            "--dbname", "postgres"]
-    if fmt == "custom":
-        cmd = ["pg_restore", *base, "--no-owner", "--clean", "--if-exists", str(path)]
-    else:
-        cmd = ["psql", *base, "-v", "ON_ERROR_STOP=1", "-f", str(path)]
-    try:
-        p = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=timeout_s)
-    except FileNotFoundError:
-        tool = "pg_restore" if fmt == "custom" else "psql"
-        raise InfraError(f"{tool} not found — install postgresql-client") from None
-    except subprocess.TimeoutExpired:
-        raise CheckError(f"restore timed out after {timeout_s}s") from None
-    if p.returncode != 0:
-        raise CheckError(f"restore failed (exit {p.returncode}): {p.stderr.strip()[-800:]}")
-
-
-def dump_source(url: str, dest: Path, timeout_s: int = DUMP_TIMEOUT_S) -> None:
-    """pg_dump a live source to a custom-format file. URL is never logged."""
-    try:
-        p = subprocess.run(
-            ["pg_dump", "--format=custom", "--file", str(dest), url],
-            capture_output=True, text=True, timeout=timeout_s,
-        )
-    except FileNotFoundError:
-        raise InfraError("pg_dump not found — install postgresql-client") from None
-    except subprocess.TimeoutExpired:
-        raise CheckError(f"pg_dump timed out after {timeout_s}s") from None
-    if p.returncode != 0:
-        raise CheckError(f"pg_dump failed (exit {p.returncode}): {p.stderr.strip()[-800:]}")
-
-
-# ---------------------------------------------------------------- checks
+# ---------------------------------------------------------------- checks file
 def load_checks(path: Path) -> dict:
-    """Load the checks file (YAML preferred, JSON accepted)."""
+    """Load the checks file (YAML preferred, JSON accepted). Same shape for
+    every engine: tables, queries, integrity. The SQL inside is the engine's
+    dialect — a Postgres checks file will not run against MySQL."""
     text = path.read_text()
     if path.suffix.lower() in (".yaml", ".yml"):
         try:
@@ -226,50 +92,14 @@ def load_checks(path: Path) -> dict:
     return {"tables": tables, "queries": queries, "integrity": integrity}
 
 
-def _quote_ident(name: str) -> str:
-    return '"' + name.replace('"', '""') + '"'
-
-
-def run_checks(conn, checks: dict) -> list[dict]:
-    """Run sanity checks against an open DBAPI connection.
-
-    Returns [{name, type, passed, skipped, detail}]. A check that raises is
-    recorded as failed (with the error in detail) — it never aborts the
-    remaining checks. Skipped checks (integrity) are excluded from failures.
-    """
-    results: list[dict] = []
-    for table, minimum in (checks.get("tables") or {}).items():
-        try:
-            with conn.cursor() as cur:
-                cur.execute(f"SELECT COUNT(*) FROM {_quote_ident(table)}")
-                count = cur.fetchone()[0]
-            passed = count >= int(minimum)
-            detail = f"{count} rows (minimum {minimum})"
-        except Exception as e:  # noqa: BLE001 - recorded, not raised
-            passed, detail = False, f"error: {e}"
-        results.append({"name": f"table {table} rows", "type": "table_rows",
-                        "passed": passed, "skipped": False, "detail": detail})
-    for q in checks.get("queries") or []:
-        name, sql = q.get("name", "query"), q.get("sql", "")
-        try:
-            with conn.cursor() as cur:
-                cur.execute(sql)
-                n = len(cur.fetchall())
-            passed = n >= 1
-            detail = f"{n} row(s) returned (need >= 1)"
-        except Exception as e:  # noqa: BLE001 - recorded, not raised
-            passed, detail = False, f"error: {e}"
-        results.append({"name": name, "type": "query",
-                        "passed": passed, "skipped": False, "detail": detail})
-    return results
-
-
 # ---------------------------------------------------------------- orchestration
 def parse_check_args(argv=None) -> argparse.Namespace:
-    ap = argparse.ArgumentParser(description="Recovery Proof Postgres restore checker")
+    ap = argparse.ArgumentParser(description="Recovery Proof restore checker")
+    ap.add_argument("--engine", choices=["postgres", "mysql"], default="postgres",
+                    help="database engine (default: postgres)")
     src = ap.add_mutually_exclusive_group(required=True)
-    src.add_argument("--backup-file", type=Path, help="pg_dump backup file (.dump custom or .sql plain)")
-    src.add_argument("--source-url", help="live Postgres URL to pg_dump first (password stays out of logs)")
+    src.add_argument("--backup-file", type=Path, help="backup file (pg_dump .dump/.sql, or mysqldump .sql)")
+    src.add_argument("--source-url", help="live database URL to dump first (password stays out of logs)")
     ap.add_argument("--checks", type=Path, default=Path(__file__).parent.parent / "checks.example.yaml",
                     help="checks file (YAML or JSON)")
     ap.add_argument("--api-url", default=os.environ.get("COPILOT_API_URL"),
@@ -278,7 +108,10 @@ def parse_check_args(argv=None) -> argparse.Namespace:
                     help="append-only results history file (default: ~/.recovery-proof/results.jsonl)")
     ap.add_argument("--no-history", action="store_true", help="do not record the run in the results history")
     ap.add_argument("--label", default="nightly", help="run label used in titles and reports")
-    ap.add_argument("--postgres-image", default=POSTGRES_IMAGE, help="pinned postgres image for the temp container")
+    ap.add_argument("--image", default=None,
+                    help="container image for the temp database (default: the engine's pinned image)")
+    ap.add_argument("--database", default=None,
+                    help="database the checks connect to (default: the engine's default)")
     ap.add_argument("--ready-timeout", type=int, default=READY_TIMEOUT_S)
     ap.add_argument("--restore-timeout", type=int, default=RESTORE_TIMEOUT_S)
     ap.add_argument("--workdir", type=Path, help="working dir (default: fresh temp dir)")
@@ -288,13 +121,26 @@ def parse_check_args(argv=None) -> argparse.Namespace:
     return ap.parse_args(argv)
 
 
+def stop_container(name: str) -> None:
+    """Best-effort removal. Never raises — called from finally blocks."""
+    try:
+        subprocess.run(["docker", "rm", "-f", name],
+                       capture_output=True, text=True, timeout=30)
+    except Exception as e:  # noqa: BLE001 - cleanup must not mask the real error
+        log.warning("container cleanup failed for %s: %s", name, e)
+
+
 def run_check(args: argparse.Namespace) -> dict:
     """Execute one restore check. Always cleans up the container. Returns the result dict."""
+    engine = get_engine(args.engine)
+    image = args.image or engine.default_image
+    database = args.database or engine.default_database
     started = time.monotonic()
     workdir = args.workdir or Path(tempfile.mkdtemp(prefix="recovery-proof-restore-"))
     workdir.mkdir(parents=True, exist_ok=True)
     container: str | None = None
     result: dict = {
+        "engine": engine.name,
         "label": args.label,
         "passed": False,
         "duration_s": 0,
@@ -325,43 +171,40 @@ def run_check(args: argparse.Namespace) -> dict:
         else:
             backup_path = workdir / "source.dump"
             log.info("dumping live source %s ...", redact_url(args.source_url))
-            dump_source(args.source_url, backup_path)
+            engine.dump_source(args.source_url, backup_path, DUMP_TIMEOUT_S)
             result["backup"] = {
                 "kind": "dump", "source": redact_url(args.source_url),
                 "size_bytes": backup_path.stat().st_size, "age_s": 0,
             }
-        result["backup"]["format"] = detect_format(backup_path)
+        result["backup"]["format"] = engine.detect_format(backup_path)
 
         # --- verify the dump itself before restoring it
-        result["checks"].append(verify_dump(str(backup_path), result["backup"]["format"]))
+        result["checks"].append(engine.verify_dump(str(backup_path), result["backup"]["format"]))
         dump_check = result["checks"][-1]
         if not dump_check["passed"] and not dump_check.get("skipped"):
             raise CheckError(f"backup file failed verification: {dump_check['detail']}")
 
-        # --- temp postgres
+        # --- temp database
         password = secrets.token_hex(16)
-        cname = f"recovery-proof-restore-{secrets.token_hex(4)}"
+        cname = f"{engine.container_prefix}-{secrets.token_hex(4)}"
         container = cname
-        host, port = start_container(args.postgres_image, password, cname)
-        log.info("temp postgres at %s:%d", host, port)
-        wait_ready(cname, args.ready_timeout)
+        host, port = engine.start_container(image, password, cname, database)
+        log.info("temp %s at %s:%d", engine.name, host, port)
+        engine.wait_ready(cname, password, args.ready_timeout)
 
         # --- restore
         log.info("restoring (%s format) ...", result["backup"]["format"])
-        restore_backup(result["backup"]["format"], backup_path, host, port,
-                       password, args.restore_timeout)
+        engine.restore_backup(result["backup"]["format"], backup_path, host, port,
+                              password, database, args.restore_timeout)
         result["restore_ok"] = True
 
         # --- sanity + integrity checks
         checks = load_checks(args.checks)
-        conn = psycopg.connect(host=host, port=port, user="postgres",
-                               password=password, dbname="postgres",
-                               connect_timeout=10,
-                               options=f"-c statement_timeout={STATEMENT_TIMEOUT_MS}")
+        conn = engine.connect(host, port, password, database)
         try:
-            result["checks"].extend(run_checks(conn, checks))
+            result["checks"].extend(engine.run_checks(conn, checks))
             if (checks.get("integrity") or {}).get("enabled"):
-                result["checks"].extend(run_integrity_checks(conn))
+                result["checks"].extend(engine.run_integrity_checks(conn))
         finally:
             conn.close()
 

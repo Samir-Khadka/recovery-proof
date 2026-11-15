@@ -1,7 +1,8 @@
 """Tests for URL redaction and backup-format detection."""
 from pathlib import Path
 
-from recovery_proof.check import detect_format, redact_url
+from recovery_proof.engines.base import redact_url
+from recovery_proof.engines.postgres import PostgresEngine
 
 
 def test_redact_url_hides_password():
@@ -26,16 +27,16 @@ def test_redact_url_garbage_returns_marker():
 def test_detect_format_custom_magic(tmp_path):
     p = tmp_path / "b.dump"
     p.write_bytes(b"PGDMP" + b"\x00" * 100)
-    assert detect_format(p) == "custom"
+    assert PostgresEngine().detect_format(p) == "custom"
 
 
 def test_detect_format_plain_sql(tmp_path):
     p = tmp_path / "b.sql"
     p.write_bytes(b"CREATE TABLE t (id INT);\n")
-    assert detect_format(p) == "plain"
+    assert PostgresEngine().detect_format(p) == "plain"
 
 
 def test_detect_format_empty_file_is_plain(tmp_path):
     p = tmp_path / "empty"
     p.write_bytes(b"")
-    assert detect_format(p) == "plain"
+    assert PostgresEngine().detect_format(p) == "plain"

@@ -15,17 +15,16 @@ clean-room recovery are on the roadmap (see `PLAN.md`).
 > accurately in `PLAN.md` §10: DORA forces yearly tested recovery, but it
 > never says "immutable" or sets a numeric RTO.
 
-## What v0.1 does
+## What it does
 
 - Restores a Postgres backup (`.dump` custom format or `.sql`) into an
   ephemeral `postgres:16.4` container — random password, random localhost
   port, deleted in a `finally` block even when something fails.
 - Verifies the dump itself first (`pg_restore --list` for custom format).
 - Runs your checks file: per-table minimum row counts, custom SQL queries
-  that must return ≥1 row, and — new in v0.1 — **integrity checks**
-  (amcheck btree verification on the restored database). A check whose
-  prerequisite is unavailable is recorded as **skipped**, never as a pass
-  or a failure.
+  that must return ≥1 row, and **integrity checks** (amcheck btree
+  verification on the restored database). A check whose prerequisite is
+  unavailable is recorded as **skipped**, never as a pass or a failure.
 - Records every run to an append-only history
   (`~/.recovery-proof/results.jsonl`) and publishes the **measured recovery
   time** (median + p95 restore duration) with `recovery-proof report`.
@@ -39,16 +38,36 @@ Extracted from the Incident Copilot restore checker
 checks-file format, the event shape, and the Telegram path all carry over.
 See `PLAN.md` §5 for the exact reuse map.
 
+## What v0.2 does (new)
+
+- **MySQL** (`--engine mysql`): restores a mysqldump SQL backup into an
+  ephemeral `mysql:8.0` container and runs the same checks-file shape
+  (table row counts + custom SQL, in MySQL dialect — see
+  `checks.mysql.example.yaml`). Integrity is `CHECK TABLE` over every base
+  table. The password travels via `MYSQL_PWD`, never on a command line.
+  The dump restores into `--database` (default `recovery_proof`); use a
+  single-database dump without `CREATE DATABASE` (the plain
+  `mysqldump <db>` form).
+- The checker is now an engine-agnostic orchestrator over an engine
+  interface (`recovery_proof/engines/`). Adding a database means adding an
+  engine, not touching the orchestrator.
+
 ## Quickstart
 
 ```bash
 pip install -r requirements.txt
 
-# From a backup file
+# Postgres: from a backup file
 python -m recovery_proof check --backup-file /backups/latest.dump --checks checks.yaml
 
-# Or dump a live source first, then restore the fresh dump
+# Postgres: dump a live source first, then restore the fresh dump
 python -m recovery_proof check --source-url "postgresql://user:pw@host/db" --checks checks.yaml
+
+# MySQL: from a mysqldump file
+python -m recovery_proof check --engine mysql --backup-file /backups/latest.sql --checks checks.mysql.yaml
+
+# MySQL: dump a live source first
+python -m recovery_proof check --engine mysql --source-url "mysql://user:pw@host:3306/db" --checks checks.mysql.yaml
 
 # The measured recovery time, from the history
 python -m recovery_proof report --system nightly
@@ -58,8 +77,8 @@ python -m recovery_proof report --system nightly --format json
 Exit codes: `0` = all checks passed, `1` = restore or a check failed,
 `2` = infra/usage error (no Docker, missing file, missing tool).
 
-Host prerequisites: Docker, `postgresql-client` (`pg_dump` / `pg_restore` /
-`psql`), Python 3.11+.
+Host prerequisites: Docker, the engine's client tools (`postgresql-client`
+for Postgres, `mysql-client` for MySQL), Python 3.11+.
 
 ## Checks file
 
