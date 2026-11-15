@@ -145,14 +145,42 @@ steps:
     min_score: 60
 ```
 
-Six step types: `restore`, `audit`, `clean-point`, `score`, `shell`,
-`wait`. A failed step stops the drill unless `continue_on_failure` is
+Seven step types: `restore`, `audit`, `clean-point`, `score`, `k8s`,
+`shell`, `wait`. A failed step stops the drill unless `continue_on_failure` is
 set. The verdict is PASS only when every step passes AND the measured
 recovery time — the time spent in restore steps, not the whole drill — is
 within the declared RTO. Results record to
 `~/.recovery-proof/drills.jsonl`, and Telegram + Slack are notified once
 at the end. Scheduling is your cron, not a built-in daemon:
 `0 2 * * 0 recovery-proof drill --playbook drill.yaml`.
+
+## Kubernetes restore verification (v0.7)
+
+A backup is only as good as the workload it restores. The K8s verifier
+answers from files, with no cluster needed:
+
+```bash
+# Can this workload be recreated from its manifests?
+recovery-proof k8s --manifests ./k8s/
+
+# Is this Velero backup usable? (a backup directory from object storage,
+# or a bare .tar.gz — download it with `velero backup download`)
+recovery-proof k8s --velero ./velero-backup/
+
+# Both: every workload the manifests define must be in the backup
+recovery-proof k8s --manifests ./k8s/ --velero ./velero-backup/
+```
+
+Manifest checks: every referenced ConfigMap/Secret/PVC exists in the
+bundle, every container image is pinned (no `latest`, no missing tag),
+every Service selects a workload, no duplicate resource, every PVC
+requests storage. Velero checks (format verified against the Velero docs,
+format 1.1): the backup phase is Completed, the format version is
+supported, there are no validation errors, the tarball reads and its
+resources are valid JSON, and every PVC that should have a volume
+snapshot has one. Findings are errors (block a restore) or warnings
+(risky but restorable). A `k8s` step type joins the drill runner, so a
+drill can verify the workload as part of the recovery it proves.
 
 ## S3 protection audit (v0.3)
 

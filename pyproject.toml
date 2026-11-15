@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "recovery-proof"
-version = "0.6.0"
+version = "0.7.0"
 description = "A vendor-neutral layer that proves your backups actually restore — Postgres restore tests, integrity checks, and a measured recovery time."
 readme = "README.md"
 requires-python = ">=3.11"

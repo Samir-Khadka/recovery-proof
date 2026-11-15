@@ -196,6 +196,29 @@ def test_clean_point_step_fails_when_no_clean_point():
     assert "no clean point" in result["steps"][0]["detail"]
 
 
+def test_k8s_step_passes_and_fails():
+    k8s_fix = ROOT / "fixtures" / "k8s"
+    pb = _playbook()
+    pb["steps"] = [{"name": "k8s", "type": "k8s",
+                    "manifests": str(k8s_fix / "manifests"),
+                    "velero": str(k8s_fix / "velero-backup")}]
+    result = run_drill(pb)
+    assert result["verdict"] == "PASS"
+    assert "can be recreated" in result["steps"][0]["detail"]
+
+    pb["steps"] = [{"name": "k8s", "type": "k8s",
+                    "manifests": str(k8s_fix / "manifests-broken")}]
+    result = run_drill(pb)
+    assert result["verdict"] == "FAIL"
+    assert "shop-config-missing" in result["steps"][0]["detail"]
+
+
+def test_k8s_step_validation(tmp_path):
+    with pytest.raises(DrillError, match="needs 'manifests' or 'velero'"):
+        load_playbook(_write_playbook(
+            tmp_path, {"name": "x", "steps": [{"name": "k", "type": "k8s"}]}))
+
+
 # ------------------------------------------------------------ CLI + reports
 def test_drill_cli_exit_codes_and_history(tmp_path, monkeypatch, capsys):
     drills = tmp_path / "drills.jsonl"

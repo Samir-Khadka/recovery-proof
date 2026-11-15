@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.7.0 — 2026-11-15
+
+- Kubernetes restore verification (`recovery-proof k8s`, Phase 6 — K8s):
+  no cluster needed. `--manifests <dir>` checks a manifest bundle can be
+  recreated — every referenced ConfigMap/Secret/PVC exists, every image
+  is pinned, every Service selects a workload, no duplicate resource,
+  every PVC requests storage. `--velero <dir|tarball>` inspects a Velero
+  backup in the documented format (velero-backup.json + .tar.gz, format
+  1.1): phase Completed, a supported format version, no validation
+  errors, a readable tarball of valid-JSON resources, and a volume
+  snapshot for every PVC that should have one. With both, the verifier
+  cross-checks that every workload the manifests define is in the
+  backup. Findings are errors (block a restore) or warnings (risky but
+  restorable); a bare tarball is inspected without the phase and snapshot
+  checks and says so. A `k8s` step type joins the drill runner (7 step
+  types). Fixtures are generated deterministically by
+  `scripts/make_k8s_fixtures.py`. VMs and file shares remain for a later
+  Phase 6 slice.
+- 175 unit tests + 3 real-Docker tests.
+
 ## 0.6.0 — 2026-11-15
 
 - Drills and runbooks (`recovery-proof drill --playbook drill.yaml`, Phase 5):

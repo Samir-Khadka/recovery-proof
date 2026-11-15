@@ -30,6 +30,8 @@ Step types:
 - clean-point: score restore points. Passes when a clean point exists.
 - score: compute the readiness score for a system. Passes when the score
   is >= min_score (default 60).
+- k8s: verify a K8s workload can be restored (manifests and/or a Velero
+  backup). Passes when the verifier reports OK.
 - shell: run a command; passes on exit code 0. Playbooks are trusted local
   files — the runner executes what you wrote, and never downloads or
   fetches a playbook.
@@ -57,7 +59,7 @@ EXIT_PASS = 0
 EXIT_FAIL = 1
 EXIT_INFRA = 2
 
-STEP_TYPES = {"restore", "audit", "clean-point", "score", "shell", "wait"}
+STEP_TYPES = {"restore", "audit", "clean-point", "score", "k8s", "shell", "wait"}
 DEFAULT_STEP_TIMEOUT_S = 600
 DEFAULT_MIN_SCORE = 60
 
@@ -138,6 +140,9 @@ def _validate_step(step: dict, index: int) -> None:
         min_score = step.get("min_score", DEFAULT_MIN_SCORE)
         if not isinstance(min_score, (int, float)) or not 0 <= min_score <= 100:
             raise DrillError(f"{where}: 'min_score' must be 0–100")
+    elif stype == "k8s":
+        if not step.get("manifests") and not step.get("velero"):
+            raise DrillError(f"{where}: a k8s step needs 'manifests' or 'velero'")
     elif stype == "shell":
         if not isinstance(step.get("command"), str) or not step["command"].strip():
             raise DrillError(f"{where}: a shell step needs a non-empty 'command'")
@@ -231,11 +236,32 @@ def _run_wait(step: dict, playbook: dict) -> tuple[bool, str]:
     return True, f"waited {step['seconds']}s"
 
 
+def _run_k8s(step: dict, playbook: dict) -> tuple[bool, str]:
+    from .k8s import run_k8s
+    try:
+        result = run_k8s(
+            Path(step["manifests"]) if step.get("manifests") else None,
+            Path(step["velero"]) if step.get("velero") else None)
+    except ValueError as e:
+        return False, f"k8s error: {e}"
+    if result["ok"]:
+        return True, "K8s workload can be recreated from this backup"
+    errors = []
+    for part in ("manifests", "velero"):
+        if result[part]:
+            errors += [f["detail"] for f in result[part]["findings"]
+                       if f["severity"] == "error"]
+    errors += [f["detail"] for f in result["cross_check"]
+               if f["severity"] == "error"]
+    return False, "; ".join(errors[:3]) or "K8s verification failed"
+
+
 _STEP_RUNNERS = {
     "restore": _run_restore,
     "audit": _run_audit,
     "clean-point": _run_clean_point,
     "score": _run_score,
+    "k8s": _run_k8s,
     "shell": _run_shell,
     "wait": _run_wait,
 }
