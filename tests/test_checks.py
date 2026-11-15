@@ -105,4 +105,4 @@ def test_run_checks_quotes_weird_table_names():
     conn = FakeConn(table_handler({"we\"ird": 2}))
     results = run_checks(conn, {"tables": {'we"ird': 1}, "queries": []})
     assert results[0]["passed"] is True
-    assert '"we""ird"' in conn.cursor_obj.executed[0]
+    assert '"we""ird"' in conn.cursor_obj.executed[0][0]

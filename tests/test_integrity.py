@@ -46,16 +46,24 @@ def test_verify_dump_plain_is_skipped_not_passed():
 
 
 def _amcheck_handler(indexes, corrupt=None):
+    """indexes: [(schema, name)]. corrupt: set of qualified 'schema.name'."""
     corrupt = corrupt or set()
 
-    def handler(sql):
+    def handler(sql, params=None):
         if "CREATE EXTENSION" in sql:
             return ("all", [])
         if "FROM pg_index" in sql:
-            return ("all", [(name,) for name in indexes])
+            return ("all", [(schema, name) for schema, name in indexes])
         if "bt_index_check" in sql:
-            name = sql.split('"')[1]
-            if name in corrupt:
+            # Regression guard for the CI failure: the index must arrive as a
+            # bound parameter (a regclass value), never interpolated into the
+            # SQL as a quoted identifier — that makes Postgres look for a
+            # column of that name and fails on every index.
+            assert "%s" in sql, "bt_index_check must be parameterised"
+            assert params and len(params) == 1, "bt_index_check needs one parameter"
+            qualified = params[0]
+            assert "." in qualified, "index name must be schema-qualified"
+            if qualified in corrupt:
                 raise RuntimeError("heap tuple (0,1) from table points to missing index tuple")
             return ("all", [(None,)])
         return ("all", [])
@@ -64,23 +72,29 @@ def _amcheck_handler(indexes, corrupt=None):
 
 
 def test_amcheck_all_indexes_verified():
-    conn = FakeConn(_amcheck_handler(["idx_users_email", "idx_orders_user"]))
+    conn = FakeConn(_amcheck_handler([("public", "idx_users_email"), ("public", "idx_orders_user")]))
     results = run_integrity_checks(conn)
     assert len(results) == 1
     assert results[0]["passed"] is True and results[0]["skipped"] is False
     assert "2 btree indexes verified" in results[0]["detail"]
+    # The index names travelled as parameters, not as SQL text.
+    calls = [e for e in conn.cursor_obj.executed if "bt_index_check" in e[0]]
+    assert [c[1] for c in calls] == [("public.idx_users_email",), ("public.idx_orders_user",)]
 
 
 def test_amcheck_corrupt_index_fails_and_names_it():
-    conn = FakeConn(_amcheck_handler(["idx_ok", "idx_bad"], corrupt={"idx_bad"}))
+    conn = FakeConn(_amcheck_handler(
+        [("public", "idx_ok"), ("public", "idx_bad")],
+        corrupt={"public.idx_bad"},
+    ))
     results = run_integrity_checks(conn)
     assert results[0]["passed"] is False
-    assert "idx_bad" in results[0]["detail"]
+    assert "public.idx_bad" in results[0]["detail"]
     assert "1/2 indexes failed" in results[0]["detail"]
 
 
 def test_amcheck_unavailable_is_skipped():
-    def handler(sql):
+    def handler(sql, params=None):
         raise RuntimeError('extension "amcheck" is not available')
     conn = FakeConn(handler)
     results = run_integrity_checks(conn)

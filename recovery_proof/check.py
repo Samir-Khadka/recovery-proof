@@ -409,6 +409,9 @@ def check_main(argv=None) -> int:
                  passed_n, total_n, result["duration_s"],
                  result["history"], result["event"], result["telegram"])
         return EXIT_PASS
+    for c in result["checks"]:
+        if not c["passed"] and not c.get("skipped"):
+            log.error("  failed check: %s — %s", c["name"], c.get("detail", ""))
     log.error("FAIL: %s (history: %s, event: %s, telegram: %s)",
               result["failed_reason"], result["history"],
               result["event"], result["telegram"])

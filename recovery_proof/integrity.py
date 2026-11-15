@@ -80,12 +80,13 @@ def run_integrity_checks(conn) -> list[dict]:
         with conn.cursor() as cur:
             cur.execute("CREATE EXTENSION IF NOT EXISTS amcheck")
             cur.execute(
-                "SELECT c.relname FROM pg_index i "
+                "SELECT n.nspname, c.relname FROM pg_index i "
                 "JOIN pg_class c ON c.oid = i.indexrelid "
+                "JOIN pg_namespace n ON n.oid = c.relnamespace "
                 "JOIN pg_am a ON a.oid = c.relam "
                 "WHERE a.amname = 'btree'"
             )
-            indexes = [row[0] for row in cur.fetchall()]
+            indexes = [(row[0], row[1]) for row in cur.fetchall()]
     except Exception as e:  # noqa: BLE001 - amcheck unavailable, record and move on
         try:
             conn.rollback()
@@ -107,13 +108,18 @@ def run_integrity_checks(conn) -> list[dict]:
             "detail": "no btree indexes found — nothing to verify",
         }]
     failed: list[str] = []
-    for name in indexes:
+    for schema, name in indexes:
+        qualified = f"{schema}.{name}"
         try:
             with conn.cursor() as cur:
-                cur.execute(f"SELECT bt_index_check({_quote_ident(name)})")
+                # Parameterised: the name is a regclass value, not a column
+                # reference. (Quoting it as an identifier — bt_index_check
+                # ("users_pkey") — makes Postgres look for a column of that
+                # name and fails on every index.)
+                cur.execute("SELECT bt_index_check(%s)", (qualified,))
                 cur.fetchall()
         except Exception as e:  # noqa: BLE001 - one bad index fails the check
-            failed.append(f"{name}: {e}")
+            failed.append(f"{qualified}: {e}")
             try:
                 conn.rollback()
             except Exception:
@@ -134,7 +140,3 @@ def run_integrity_checks(conn) -> list[dict]:
         "skipped": False,
         "detail": f"{len(indexes)} btree indexes verified",
     }]
-
-
-def _quote_ident(name: str) -> str:
-    return '"' + name.replace('"', '""') + '"'

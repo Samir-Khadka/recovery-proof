@@ -3,11 +3,11 @@ from __future__ import annotations
 
 
 class FakeCursor:
-    """A DBAPI cursor driven by a handler: handler(sql) -> ("one", value) | ("all", rows)."""
+    """A DBAPI cursor driven by a handler: handler(sql, params) -> ("one", value) | ("all", rows)."""
 
     def __init__(self, handler):
         self.handler = handler
-        self.executed: list[str] = []
+        self.executed: list[tuple[str, object]] = []
 
     def __enter__(self):
         return self
@@ -15,9 +15,9 @@ class FakeCursor:
     def __exit__(self, *exc):
         return False
 
-    def execute(self, sql):
-        self.executed.append(sql)
-        self._result = self.handler(sql)
+    def execute(self, sql, params=None):
+        self.executed.append((sql, params))
+        self._result = self.handler(sql, params)
 
     def fetchone(self):
         kind, val = self._result
@@ -56,7 +56,7 @@ def table_handler(counts: dict, queries=None):
     """
     queries = queries or {}
 
-    def handler(sql):
+    def handler(sql, params=None):
         if sql.startswith("SELECT COUNT(*)"):
             for key, val in counts.items():
                 quoted = '"' + key.replace('"', '""') + '"'

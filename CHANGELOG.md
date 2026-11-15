@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.1 — 2026-11-15
+
+- Fixed the amcheck check: it passed the index name as a quoted identifier
+  (`bt_index_check("users_pkey")`), which Postgres reads as a column
+  reference and fails on every index. The name is now a bound parameter
+  (`bt_index_check(%s)` with the schema-qualified name), i.e. a regclass
+  value. Found by the CI docker-restore job; the unit tests now assert the
+  parameterised form so it cannot regress.
+- Failed checks now log their detail line, so a CI failure names the cause
+  instead of only the check name.
+
 ## 0.1.0 — 2026-11-15
 
 - Postgres restore checker as a standalone package, extracted from the
