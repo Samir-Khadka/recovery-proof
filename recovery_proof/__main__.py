@@ -25,6 +25,8 @@ def build_parser() -> argparse.ArgumentParser:
     sub = ap.add_subparsers(dest="command", required=True)
     sub.add_parser("check", help="restore a Postgres backup and run checks",
                    add_help=False)
+    sub.add_parser("audit", help="S3 backup protection audit (read-only)",
+                   add_help=False)
     report_p = sub.add_parser("report", help="measured recovery time from the results history")
     report_p.add_argument("--system", default=None,
                           help="label to report on (default: all systems)")
@@ -41,6 +43,10 @@ def main(argv=None) -> int:
     if argv and argv[0] == "check":
         # Hand the whole tail (including -h) to the checker's own parser.
         return check_main(argv[1:])
+    if argv and argv[0] == "audit":
+        # Same: the audit has its own parser (recovery_proof.audit).
+        from .audit import audit_main
+        return audit_main(argv[1:])
     args = build_parser().parse_args(argv)
     if args.command == "report":
         try:

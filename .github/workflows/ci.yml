@@ -37,5 +37,10 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt -r requirements-dev.txt
-      - name: Real restore test against Docker Postgres
-        run: python -m pytest tests/test_docker_restore.py -q -m docker
+      - name: Start MinIO (S3-compatible store for the audit test)
+        run: |
+          docker run -d --name minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin \
+            minio/minio server /data
+      - name: Real restore + audit tests against Docker
+        run: python -m pytest tests/ -q -m docker

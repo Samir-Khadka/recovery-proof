@@ -10,4 +10,4 @@ extended: database integrity checks, an append-only results history with a
 measured-RTO report, and a standalone CLI that works without the Copilot API.
 """
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"

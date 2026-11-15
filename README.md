@@ -52,6 +52,26 @@ See `PLAN.md` §5 for the exact reuse map.
   interface (`recovery_proof/engines/`). Adding a database means adding an
   engine, not touching the orchestrator.
 
+## S3 protection audit (v0.3)
+
+```bash
+# Copy audit.example.yaml, fill in your bucket + role ARNs, then:
+python -m recovery_proof audit --config audit.yaml
+python -m recovery_proof audit --config audit.yaml --format json --output audit.json
+
+# Against a local MinIO (S3-compatible store):
+python -m recovery_proof audit --config audit.yaml --endpoint-url http://localhost:9000
+```
+
+Six read-only checks: Object Lock enabled, default retention ≥ 30 days,
+production role cannot delete (IAM policy simulation — never a trial
+delete), separate credentials, versioning enabled, retention outlasts dwell
+time (≥ 35 days). The audit runs with a dedicated reader credential, never
+the production role. A check that cannot be evaluated (missing permission,
+missing config, an S3-compatible store without IAM) is recorded as
+**skipped**, never as a pass. Exit 0 = all pass, 1 = a check failed,
+2 = infra error (bad config, missing bucket, no credentials).
+
 ## Quickstart
 
 ```bash

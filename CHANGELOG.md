@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.3.0 — 2026-11-15
+
+- S3 protection audit (`recovery-proof audit --config audit.yaml`, Phase 2):
+  six read-only checks — Object Lock enabled, default retention ≥ 30 days,
+  production role cannot delete (IAM policy simulation, never a trial
+  delete), separate credentials (backup writer ≠ production, and the audit
+  itself is not running as production), versioning enabled, retention
+  outlasts dwell time (≥ 35 days, configurable). A check that cannot be
+  evaluated is skipped, never a pass. Runs with a dedicated reader
+  credential; `--endpoint-url` targets S3-compatible stores (MinIO).
+- CI: a MinIO docker test verifies the S3-side checks against a real
+  S3-compatible API and that the IAM-backed checks degrade to skipped
+  there. Fixed along the way: boto3 resolves credentials eagerly at client
+  creation, so a missing credential source now fails cleanly (exit 2, one
+  line) instead of a traceback.
+- 104 unit tests + 3 real-Docker tests (Postgres + MySQL restore, MinIO audit).
+
 ## 0.2.0 — 2026-11-15
 
 - MySQL engine (`--engine mysql`): restores a mysqldump SQL backup into an

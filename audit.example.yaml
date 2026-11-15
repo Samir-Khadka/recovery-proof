@@ -1,0 +1,38 @@
+# Recovery Proof S3 protection audit config (v0.3).
+#
+# Copy to audit.yaml, fill in your bucket and role ARNs, then:
+#   python -m recovery_proof audit --config audit.yaml
+#
+# The audit runs with a dedicated READER credential (an IAM user or role
+# that can read the bucket and simulate the production role's policies) —
+# never the production role, never the backup writer. It only calls read
+# APIs (head_bucket, get_bucket_versioning, get_object_lock_configuration,
+# iam:SimulatePrincipalPolicy, sts:GetCallerIdentity). It never writes,
+# deletes, or attempts a delete.
+#
+# The two role ARNs are how the audit knows who is who:
+# - production_role_arn: the role/user the application runs as in production.
+# - backup_writer_arn: the role/user that writes the backups.
+# The "separate credentials" check passes only when they differ AND the
+# audit itself is not running as the production role.
+
+# The bucket holding the backups (or pass --bucket).
+bucket: my-app-backups
+
+# AWS region (optional; the default credential chain otherwise).
+region: eu-west-1
+
+# Only objects under this prefix count as backups (optional; "" = the whole bucket).
+backup_prefix: db/
+
+# Who runs production, and who writes the backups (both required for the
+# "production cannot delete" and "separate credentials" checks).
+production_role_arn: arn:aws:iam::123456789012:role/myapp-prod
+backup_writer_arn: arn:aws:iam::123456789012:role/myapp-backup-writer
+
+# Default-retention minimum, in days (default 30).
+min_retention_days: 30
+
+# Dwell window the retention must outlast, in days (default 35).
+# No dwell-time statistic is cited: none is traceable to a primary source.
+dwell_days: 35
