@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.4.0 — 2026-11-15
+
+- Readiness score (`recovery-proof score --system nightly`, Phase 3): one
+  number 0–100 + grade per system. Formula documented in
+  `recovery_proof/score.py` and the README — restore pass rate (last 10
+  runs, 40), freshness (20), measured RTO vs declared RTO (20), latest
+  protection audit (20). Every input is a measured fact; a component with
+  no data scores 0 and says so. `--format md` produces the auditor-readable
+  report; `--format json` for machines.
+- Dashboard (`recovery-proof dashboard`): one self-contained HTML page from
+  the restore + audit histories — score, grade, measured RTO, pass rate,
+  last run, audit status per system. No server, no JS framework, light
+  premium palette.
+- Slack alerts (`SLACK_WEBHOOK_URL`): the restore checker and the audit now
+  notify Slack as well as Telegram. Best-effort — a notify failure never
+  fails the check. The audit also records to its own history
+  (`~/.recovery-proof/audit.jsonl`, `--no-history` to skip) so the score
+  can see it; the audit config gains an optional `system` field (default
+  the bucket name).
+- 125 unit tests + 3 real-Docker tests.
+
 ## 0.3.0 — 2026-11-15
 
 - S3 protection audit (`recovery-proof audit --config audit.yaml`, Phase 2):

@@ -1,0 +1,17 @@
+# Recovery Proof systems config (v0.4).
+#
+# Copy to systems.yaml and set the declared RTO (in seconds) for each
+# system (the same label you pass as --label to `recovery-proof check`).
+# The score command reads it:
+#   recovery-proof score --systems systems.yaml
+#   recovery-proof dashboard --systems systems.yaml
+#
+# A system with no declared RTO scores 0 on the RTO component and says so.
+# The declared RTO is the only input to the score that is not a measured
+# fact — it is your promise, and the score measures you against it.
+
+nightly:
+  rto_seconds: 900      # 15 minutes
+
+weekly:
+  rto_seconds: 3600     # 1 hour

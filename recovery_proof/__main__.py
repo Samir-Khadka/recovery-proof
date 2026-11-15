@@ -27,6 +27,10 @@ def build_parser() -> argparse.ArgumentParser:
                    add_help=False)
     sub.add_parser("audit", help="S3 backup protection audit (read-only)",
                    add_help=False)
+    sub.add_parser("score", help="recovery readiness score (0-100) per system",
+                   add_help=False)
+    sub.add_parser("dashboard", help="static HTML dashboard from the histories",
+                   add_help=False)
     report_p = sub.add_parser("report", help="measured recovery time from the results history")
     report_p.add_argument("--system", default=None,
                           help="label to report on (default: all systems)")
@@ -47,6 +51,12 @@ def main(argv=None) -> int:
         # Same: the audit has its own parser (recovery_proof.audit).
         from .audit import audit_main
         return audit_main(argv[1:])
+    if argv and argv[0] == "score":
+        from .score import score_main
+        return score_main(argv[1:])
+    if argv and argv[0] == "dashboard":
+        from .dashboard import dashboard_main
+        return dashboard_main(argv[1:])
     args = build_parser().parse_args(argv)
     if args.command == "report":
         try:

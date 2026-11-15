@@ -60,7 +60,7 @@ def post_event(api_url: str | None, payload: dict, timeout: int = 15) -> str:
         return "failed"
 
 
-def telegram_summary(label: str, result: dict) -> str:
+def telegram_summary(label: str, result: dict, kind: str = "Restore check") -> str:
     checks = result.get("checks", [])
     passed_n = sum(1 for c in checks if c.get("passed") and not c.get("skipped"))
     total_n = sum(1 for c in checks if not c.get("skipped"))
@@ -71,10 +71,10 @@ def telegram_summary(label: str, result: dict) -> str:
     age_h = (backup.get("age_s") or 0) / 3600
     skip_note = f" ({skipped_n} skipped)" if skipped_n else ""
     if result.get("passed"):
-        return (f"✅ Restore check ({label}): PASS — {passed_n}/{total_n} checks"
+        return (f"✅ {kind} ({label}): PASS — {passed_n}/{total_n} checks"
                 f"{skip_note} in {dur}s. Backup {size_mb:.0f} MB, {age_h:.1f}h old.")
     reason = result.get("failed_reason") or "checks failed"
-    return (f"❌ Restore check ({label}): FAIL — {reason}. "
+    return (f"❌ {kind} ({label}): FAIL — {reason}. "
             f"Backup {size_mb:.0f} MB, {age_h:.1f}h old.")
 
 
@@ -95,12 +95,54 @@ def send_telegram(token: str, chat_id: str, text: str, timeout: int = 15) -> boo
         return False
 
 
-def maybe_notify_telegram(label: str, result: dict) -> str:
+def maybe_notify_telegram(label: str, result: dict, kind: str = "Restore check") -> str:
     """Send the summary if configured; returns 'sent' | 'failed' | 'skipped'."""
     token = os.environ.get("TELEGRAM_BOT_TOKEN")
     chat_id = os.environ.get("TELEGRAM_CHAT_ID")
     if not token or not chat_id:
         log.info("Telegram not configured — skipping")
         return "skipped"
-    ok = send_telegram(token, chat_id, telegram_summary(label, result))
+    ok = send_telegram(token, chat_id, telegram_summary(label, result, kind))
+    return "sent" if ok else "failed"
+
+
+def slack_summary(label: str, result: dict, kind: str = "Restore check") -> str:
+    """The same summary, in Slack's plain-text shape (no markdown needed)."""
+    checks = result.get("checks", [])
+    passed_n = sum(1 for c in checks if c.get("passed") and not c.get("skipped"))
+    total_n = sum(1 for c in checks if not c.get("skipped"))
+    skipped_n = sum(1 for c in checks if c.get("skipped"))
+    dur = result.get("duration_s", 0)
+    skip_note = f" ({skipped_n} skipped)" if skipped_n else ""
+    if result.get("passed"):
+        return (f":white_check_mark: {kind} ({label}): PASS — "
+                f"{passed_n}/{total_n} checks{skip_note} in {dur}s.")
+    reason = result.get("failed_reason") or "checks failed"
+    return f":x: {kind} ({label}): FAIL — {reason}."
+
+
+def send_slack(webhook_url: str, text: str, timeout: int = 15) -> bool:
+    """POST to a Slack incoming webhook. Returns False (never raises) on failure."""
+    try:
+        body = json.dumps({"text": text}).encode()
+        req = urllib.request.Request(
+            webhook_url, data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return 200 <= resp.status < 300
+    except Exception as e:  # noqa: BLE001 - notify failures are warnings
+        log.warning("slack send failed: %s", e)
+        return False
+
+
+def maybe_notify_slack(label: str, result: dict, kind: str = "Restore check") -> str:
+    """Send the summary to Slack if SLACK_WEBHOOK_URL is set.
+    Returns 'sent' | 'failed' | 'skipped'."""
+    webhook_url = os.environ.get("SLACK_WEBHOOK_URL")
+    if not webhook_url:
+        log.info("Slack not configured — skipping")
+        return "skipped"
+    ok = send_slack(webhook_url, slack_summary(label, result, kind))
     return "sent" if ok else "failed"

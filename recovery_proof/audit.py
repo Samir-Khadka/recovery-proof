@@ -91,6 +91,7 @@ def load_audit_config(path: Path) -> dict:
     cfg = {
         "bucket": data.get("bucket"),
         "region": data.get("region"),
+        "system": data.get("system"),
         "backup_prefix": (data.get("backup_prefix") or "").lstrip("/"),
         "production_role_arn": data.get("production_role_arn"),
         "backup_writer_arn": data.get("backup_writer_arn"),
@@ -157,7 +158,9 @@ def audit_bucket(cfg: dict, s3, iam, sts) -> dict:
     bucket = cfg["bucket"]
     if not bucket:
         raise AuditError("no bucket — set bucket in the config or pass --bucket")
-    result: dict = {"bucket": bucket, "passed": False, "checks": []}
+    result: dict = {"bucket": bucket,
+                    "system": cfg.get("system") or bucket,
+                    "passed": False, "checks": []}
 
     # The bucket itself must exist and be reachable; anything else is infra.
     try:
@@ -320,6 +323,12 @@ def parse_audit_args(argv=None) -> argparse.Namespace:
     ap.add_argument("--endpoint-url", help="S3-compatible endpoint, e.g. a local MinIO")
     ap.add_argument("--format", choices=["text", "json"], default="text")
     ap.add_argument("--output", type=Path, help="write the report here as well as stdout")
+    ap.add_argument("--results", type=Path, default=None,
+                    help="audit history file (default: ~/.recovery-proof/audit.jsonl)")
+    ap.add_argument("--no-history", action="store_true",
+                    help="do not record the audit in the audit history")
+    ap.add_argument("--no-telegram", action="store_true", help="skip Telegram even if configured")
+    ap.add_argument("--no-slack", action="store_true", help="skip Slack even if configured")
     ap.add_argument("-v", "--verbose", action="store_true")
     return ap.parse_args(argv)
 
@@ -367,7 +376,29 @@ def audit_main(argv=None) -> int:
     sys.stdout.write(out)
     if args.output:
         args.output.write_text(out)
+    # Record + notify (best-effort; never changes the audit's own verdict).
+    if not args.no_history:
+        from .history import append_result, default_audit_results_path
+        append_result(args.results or default_audit_results_path(), result)
+    if not args.no_telegram or not args.no_slack:
+        from .events import maybe_notify_slack, maybe_notify_telegram
+        notify_result = {"label": result["system"], "passed": result["passed"],
+                         "checks": result["checks"], "duration_s": 0,
+                         "backup": {},
+                         "failed_reason": _audit_failed_reason(result)}
+        if not args.no_telegram:
+            maybe_notify_telegram(result["system"], notify_result, kind="S3 protection audit")
+        if not args.no_slack:
+            maybe_notify_slack(result["system"], notify_result, kind="S3 protection audit")
     return EXIT_PASS if result["passed"] else EXIT_FAIL
+
+
+def _audit_failed_reason(result: dict) -> str:
+    failed = [c["name"] for c in result["checks"]
+              if not c["passed"] and not c.get("skipped")]
+    if not failed:
+        return ""
+    return f"{len(failed)}/{len(result['checks'])} checks failed: " + ", ".join(failed[:3])
 
 
 if __name__ == "__main__":

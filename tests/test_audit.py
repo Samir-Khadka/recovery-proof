@@ -234,17 +234,25 @@ def test_render_text_counts():
 
 
 def test_audit_main_exit_codes(tmp_path, monkeypatch, capsys):
+    import json as _json
     import recovery_proof.audit as aud
 
     cfg_path = tmp_path / "audit.yaml"
-    cfg_path.write_text("bucket: b\nproduction_role_arn: r\nbackup_writer_arn: w\n")
+    cfg_path.write_text("bucket: b\nsystem: nightly\n"
+                        "production_role_arn: r\nbackup_writer_arn: w\n")
+    audit_results = tmp_path / "audit.jsonl"
+    base = ["--config", str(cfg_path), "--results", str(audit_results),
+            "--no-telegram", "--no-slack"]
     monkeypatch.setattr(aud, "build_clients",
                         lambda *a, **k: (FakeS3(lock=_good_lock()), FakeIAM(), FakeSTS()))
-    assert audit_main(["--config", str(cfg_path)]) == 0
+    assert audit_main(base) == 0
     assert "PASS: 6/6 checks" in capsys.readouterr().out
+    # The audit is recorded in the audit history, keyed by system.
+    recorded = _json.loads(audit_results.read_text().strip().splitlines()[-1])
+    assert recorded["system"] == "nightly" and recorded["passed"] is True
 
     monkeypatch.setattr(aud, "build_clients",
                         lambda *a, **k: (FakeS3(lock=None), FakeIAM(), FakeSTS()))
-    assert audit_main(["--config", str(cfg_path)]) == 1
+    assert audit_main(base) == 1
 
     assert audit_main(["--config", str(tmp_path / "missing.yaml")]) == 2

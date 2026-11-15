@@ -52,6 +52,34 @@ See `PLAN.md` §5 for the exact reuse map.
   interface (`recovery_proof/engines/`). Adding a database means adding an
   engine, not touching the orchestrator.
 
+## Readiness score and dashboard (v0.4)
+
+```bash
+# One number per system, 0–100, with a grade (A ≥ 90, B ≥ 80, C ≥ 70, D ≥ 60, F < 60)
+recovery-proof score --system nightly --rto-seconds 900
+recovery-proof score --systems systems.yaml --format md   # the auditor-readable report
+recovery-proof score --format json
+
+# A static HTML dashboard from the restore + audit histories
+recovery-proof dashboard --output dashboard.html --systems systems.yaml
+```
+
+The score's formula (documented in `recovery_proof/score.py`): restore pass
+rate over the last 10 runs (40 points), freshness of the last successful
+restore (20), measured median restore vs your declared RTO (20), and the
+latest protection audit (20). Every input is a measured fact — a component
+with no data scores 0 and says so. The declared RTO is the only input that
+isn't measured: it is your promise, and the score measures you against it
+(see `systems.example.yaml`).
+
+## Slack alerts (v0.4)
+
+Set `SLACK_WEBHOOK_URL` (an incoming webhook) and the restore checker and
+the audit notify Slack on every run, alongside Telegram
+(`TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID`). Both are best-effort: a notify
+failure is logged and never fails the check. `--no-slack` / `--no-telegram`
+skip either one.
+
 ## S3 protection audit (v0.3)
 
 ```bash

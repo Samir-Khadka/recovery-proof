@@ -65,6 +65,7 @@ def _make_args(tmp_path, monkeypatch, *, engine="postgres", checks_pass=True,
     monkeypatch.setattr(chk, "stop_container", lambda *a, **k: None)
     monkeypatch.setattr(chk, "post_event", lambda *a, **k: "skipped")
     monkeypatch.setattr(chk, "maybe_notify_telegram", lambda *a, **k: "skipped")
+    monkeypatch.setattr(chk, "maybe_notify_slack", lambda *a, **k: "skipped")
     monkeypatch.setattr(pg.PostgresEngine, "start_container",
                         lambda self, *a, **k: ("127.0.0.1", 54321))
     monkeypatch.setattr(pg.PostgresEngine, "wait_ready", lambda self, *a, **k: None)
@@ -93,6 +94,7 @@ def test_run_check_full_pass_records_history(tmp_path, monkeypatch):
     assert result["engine"] == "postgres"
     assert result["restore_ok"] is True
     assert result["history"] == "recorded"
+    assert result["telegram"] == "skipped" and result["slack"] == "skipped"
     assert result["duration_s"] >= 0
     # dump check (plain SQL -> skipped) + 1 table check; amcheck skipped
     # because the fake conn has no amcheck tables (CREATE EXTENSION returns

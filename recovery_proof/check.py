@@ -36,6 +36,7 @@ from .engines import get_engine
 from .engines.base import CheckError, InfraError, redact_url
 from .events import (
     build_event_payload,
+    maybe_notify_slack,
     maybe_notify_telegram,
     post_event,
 )
@@ -117,6 +118,7 @@ def parse_check_args(argv=None) -> argparse.Namespace:
     ap.add_argument("--workdir", type=Path, help="working dir (default: fresh temp dir)")
     ap.add_argument("--keep-workdir", action="store_true", help="debug: don't delete the temp dir")
     ap.add_argument("--no-telegram", action="store_true", help="skip Telegram even if configured")
+    ap.add_argument("--no-slack", action="store_true", help="skip Slack even if configured")
     ap.add_argument("-v", "--verbose", action="store_true")
     return ap.parse_args(argv)
 
@@ -152,6 +154,7 @@ def run_check(args: argparse.Namespace) -> dict:
         "event": "skipped",
         "history": "skipped",
         "telegram": "skipped",
+        "slack": "skipped",
     }
     try:
         if not docker_available():
@@ -230,6 +233,7 @@ def run_check(args: argparse.Namespace) -> dict:
         result["history"] = "recorded" if ok else "failed"
     result["event"] = post_event(args.api_url, build_event_payload(args.label, result))
     result["telegram"] = "skipped" if args.no_telegram else maybe_notify_telegram(args.label, result)
+    result["slack"] = "skipped" if args.no_slack else maybe_notify_slack(args.label, result)
     return result
 
 
@@ -248,16 +252,16 @@ def check_main(argv=None) -> int:
     passed_n = sum(1 for c in result["checks"] if c["passed"] and not c.get("skipped"))
     total_n = sum(1 for c in result["checks"] if not c.get("skipped"))
     if result["passed"]:
-        log.info("PASS: %d/%d checks in %ss (history: %s, event: %s, telegram: %s)",
+        log.info("PASS: %d/%d checks in %ss (history: %s, event: %s, telegram: %s, slack: %s)",
                  passed_n, total_n, result["duration_s"],
-                 result["history"], result["event"], result["telegram"])
+                 result["history"], result["event"], result["telegram"], result["slack"])
         return EXIT_PASS
     for c in result["checks"]:
         if not c["passed"] and not c.get("skipped"):
             log.error("  failed check: %s — %s", c["name"], c.get("detail", ""))
-    log.error("FAIL: %s (history: %s, event: %s, telegram: %s)",
+    log.error("FAIL: %s (history: %s, event: %s, telegram: %s, slack: %s)",
               result["failed_reason"], result["history"],
-              result["event"], result["telegram"])
+              result["event"], result["telegram"], result["slack"])
     return EXIT_FAIL
 
 
