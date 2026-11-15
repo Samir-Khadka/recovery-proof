@@ -80,6 +80,41 @@ the audit notify Slack on every run, alongside Telegram
 failure is logged and never fails the check. `--no-slack` / `--no-telegram`
 skip either one.
 
+## Clean-point detection (v0.5)
+
+When a backup is infected, the question is not "is the latest backup good"
+but "which is the last good one". The clean-point scorer compares restore
+points and recommends the last clean point — the newest point older than
+the earliest flagged one, with the evidence listed for every point:
+
+```bash
+# File restore points (directories of files), oldest first
+recovery-proof clean-point backups/2026-11-10 backups/2026-11-11 backups/2026-11-12 \
+  --canaries canaries.yaml
+
+# Database restore points (plain-SQL dumps, oldest first)
+recovery-proof clean-point db-2026-11-10.sql db-2026-11-11.sql db-2026-11-12.sql
+```
+
+File points are scored 0–100 (flagged at 50) on five heuristics v1: known
+ransomware extensions, ransom-note filenames, canary files (a canary whose
+hash differs, or that is gone, flags the point on its own — see
+`fixtures/clean-point/canaries.yaml`), high-entropy text-like files, and
+the mass-change rate vs the previous point. Database points score the
+row-level mass-change rate (each COPY row is hashed; a mysqldump-style file
+has no COPY blocks and is reported as not measurable, not guessed).
+
+The language contract is the point: a clean score means **no signs found**,
+never "guaranteed clean" — a heuristic can miss an attack. A later point
+that scores clean after a flagged one is noted but not recommended; a clean
+heuristic score does not prove an infection is gone.
+
+Measured false-positive rate: **0 on 5 clean points** (3 file points —
+a clean point, an ordinary day's change, and a 56% mass change — and 2
+database points), asserted by the test suite over the fixtures in
+`fixtures/clean-point/` (generated deterministically by
+`scripts/make_cleanpoint_fixtures.py`).
+
 ## S3 protection audit (v0.3)
 
 ```bash

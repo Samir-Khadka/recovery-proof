@@ -1,0 +1,6 @@
+# Canary files: known content, planted in the backup.
+# If a canary's hash differs (or the file is gone) in a later point,
+# that point is flagged on its own.
+canaries:
+  - path: canary.txt
+    sha256: 2609e55f1ad246c015d6d349f665622cfe19f4391f49b7dcc7682d6db2cedc97

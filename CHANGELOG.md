@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.5.0 — 2026-11-15
+
+- Clean-point detection (`recovery-proof clean-point <point>...`, Phase 4):
+  scores restore points for ransomware signs and recommends the last clean
+  point — the newest point older than the earliest flagged point, with the
+  evidence listed for every point so a human can disagree. File points
+  (directories) use five heuristics v1: known ransomware extensions
+  (25/file, capped at 50), ransom-note filenames (40), canary changed or
+  missing (50 — flags on its own), high-entropy text-like files (0–30;
+  compressed/media types are excluded, their high entropy is expected),
+  and mass change vs the previous point (0–40). Database points
+  (plain-SQL dumps) measure the row-level mass-change rate by hashing each
+  COPY row (0–100; flagged above 50%). A point is flagged at 50/100.
+  Language contract: results say "no signs found", never "guaranteed
+  clean". Measured false-positive rate: **0 on 5 clean points** (3 file
+  points incl. an ordinary day's change and a 56% mass change, 2 DB
+  points) — asserted by `test_false_positive_rate_on_clean_fixtures_is_zero`.
+  A mysqldump-style file has no COPY blocks, so its mass change is
+  reported as not measurable instead of guessed. Fixtures are generated
+  deterministically by `scripts/make_cleanpoint_fixtures.py`.
+- 144 unit tests + 3 real-Docker tests.
+
 ## 0.4.0 — 2026-11-15
 
 - Readiness score (`recovery-proof score --system nightly`, Phase 3): one

@@ -1,0 +1,5 @@
+Meeting notes
+- ship the restore checker
+- call the bank about the RTO
+
+# rewritten

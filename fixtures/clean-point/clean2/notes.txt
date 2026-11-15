@@ -1,0 +1,4 @@
+Meeting notes
+- ship the restore checker
+- call the bank about the RTO
+- new: review the drill

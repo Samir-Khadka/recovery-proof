@@ -1,0 +1,7 @@
+{
+  "database": "app",
+  "pool": 10,
+  "timeout_s": 30
+}
+
+# rewritten
