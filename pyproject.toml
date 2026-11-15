@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "recovery-proof"
+version = "0.1.0"
+description = "A vendor-neutral layer that proves your backups actually restore — Postgres restore tests, integrity checks, and a measured recovery time."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Samir Khadka" }]
+dependencies = [
+    "psycopg[binary]>=3.2",
+    "pyyaml>=6.0",
+]
+
+[project.scripts]
+recovery-proof = "recovery_proof.__main__:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "docker: needs a real Docker daemon and postgresql-client (CI docker job only)",
+]

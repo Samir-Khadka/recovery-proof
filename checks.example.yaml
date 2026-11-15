@@ -1,0 +1,34 @@
+# Recovery Proof restore sanity checks (v0.1).
+#
+# Copy to checks.yaml and tune for YOUR database, then:
+#   python -m recovery_proof check --backup-file /backups/latest.dump --checks checks.yaml
+#
+# A check fails the whole run if:
+#   - a table has fewer rows than its minimum, or
+#   - a custom query returns zero rows, or
+#   - a check raises (e.g. table missing) — the error is recorded, not fatal, or
+#   - an integrity check fails (dump unreadable, or amcheck finds a bad index).
+#
+# A check is SKIPPED (never a pass, never a failure) when the thing it needs
+# is unavailable — e.g. amcheck is not installed, or a plain-SQL dump has no
+# table of contents to verify. Skips are listed in the report.
+
+# Per-table minimum row counts.
+tables:
+  users: 1
+  orders: 1
+
+# Custom SQL queries. Each must return at least one row to pass.
+# Use these for "the data looks sane" assertions.
+queries:
+  - name: "recent orders exist"
+    sql: "SELECT 1 FROM orders WHERE created_at > now() - interval '7 days' LIMIT 1"
+  - name: "users table present in schema"
+    sql: "SELECT 1 FROM information_schema.tables WHERE table_name = 'users' LIMIT 1"
+
+# Database integrity checks (new in v0.1).
+#   enabled: run amcheck btree verification on the restored database.
+#   The dump itself is always verified first (pg_restore --list for custom
+#   format; plain SQL is recorded as skipped).
+integrity:
+  enabled: true
