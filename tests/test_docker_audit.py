@@ -1,11 +1,13 @@
 """End-to-end S3 audit test against a real S3-compatible store (CI only).
 
 Runs only when invoked with ``pytest -m docker``. The CI docker job starts
-a local MinIO (see .github/workflows/ci.yml) and this test creates a bucket
-with Object Lock + versioning + a 40-day default retention, then runs the
-audit CLI against it. MinIO has no IAM policy simulation, so the two
-IAM-backed checks degrade to skipped — which is itself asserted: the audit
-must not crash on an S3-compatible store that lacks IAM.
+Silo — the community-maintained MinIO fork (``pgsty/silo``), used because
+MinIO deleted its Docker Hub images in September 2026 and Quay stopped
+serving anonymous pulls the same month — and this test creates a bucket with
+Object Lock + versioning + a 40-day default retention, then runs the audit
+CLI against it. Silo has no IAM policy simulation, so the two IAM-backed
+checks degrade to skipped — which is itself asserted: the audit must not
+crash on an S3-compatible store that lacks IAM.
 """
 import os
 import subprocess
@@ -18,33 +20,33 @@ import pytest
 pytestmark = pytest.mark.docker
 
 ROOT = Path(__file__).parent.parent
-MINIO_URL = "http://127.0.0.1:9000"
+S3_URL = "http://127.0.0.1:9000"
 BUCKET = "recovery-proof-audit-test"
 
 
-def _minio_client():
+def _s3_client():
     import boto3
     return boto3.client(
-        "s3", endpoint_url=MINIO_URL,
+        "s3", endpoint_url=S3_URL,
         aws_access_key_id="minioadmin", aws_secret_access_key="minioadmin",
         region_name="us-east-1",
     )
 
 
-def _wait_for_minio(timeout_s=120):
+def _wait_for_s3(timeout_s=120):
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
         try:
-            _minio_client().list_buckets()
+            _s3_client().list_buckets()
             return
         except Exception:  # noqa: BLE001 - not up yet, keep waiting
             time.sleep(2)
-    raise AssertionError("MinIO did not come up within %ss" % timeout_s)
+    raise AssertionError("S3 store did not come up within %ss" % timeout_s)
 
 
-def test_audit_against_minio(tmp_path):
-    _wait_for_minio()
-    s3 = _minio_client()
+def test_audit_against_s3_compatible(tmp_path):
+    _wait_for_s3()
+    s3 = _s3_client()
     try:
         s3.create_bucket(Bucket=BUCKET, ObjectLockEnabledForBucket=True)
     except Exception as e:  # noqa: BLE001 - bucket may already exist from a rerun
@@ -72,7 +74,7 @@ def test_audit_against_minio(tmp_path):
            "AWS_DEFAULT_REGION": "us-east-1"}
     p = subprocess.run(
         [sys.executable, "-m", "recovery_proof", "audit",
-         "--config", str(cfg), "--endpoint-url", MINIO_URL],
+         "--config", str(cfg), "--endpoint-url", S3_URL],
         capture_output=True, text=True, timeout=120, cwd=ROOT, env=env,
     )
     assert p.returncode == 0, f"stdout:\n{p.stdout}\nstderr:\n{p.stderr}"
