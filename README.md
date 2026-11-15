@@ -145,8 +145,8 @@ steps:
     min_score: 60
 ```
 
-Seven step types: `restore`, `audit`, `clean-point`, `score`, `k8s`,
-`shell`, `wait`. A failed step stops the drill unless `continue_on_failure` is
+Eight step types: `restore`, `audit`, `clean-point`, `score`, `k8s`,
+`vm`, `shell`, `wait`. A failed step stops the drill unless `continue_on_failure` is
 set. The verdict is PASS only when every step passes AND the measured
 recovery time — the time spent in restore steps, not the whole drill — is
 within the declared RTO. Results record to
@@ -181,6 +181,32 @@ resources are valid JSON, and every PVC that should have a volume
 snapshot has one. Findings are errors (block a restore) or warnings
 (risky but restorable). A `k8s` step type joins the drill runner, so a
 drill can verify the workload as part of the recovery it proves.
+
+## VM restore verification (v0.8)
+
+A VM backup is only as good as the disk and the definition that boots
+it. The VM verifier answers from files, with no hypervisor needed:
+
+```bash
+# Is this disk image structurally sound? (qcow2 or raw)
+recovery-proof vm --image ./vm.qcow2
+
+# Can this VM be recreated from its libvirt domain XML?
+recovery-proof vm --domain ./domain.xml --backup-dir ./backup/
+
+# Both: the domain must use the image, and every image in the backup
+# directory should be referenced by a domain
+recovery-proof vm --image ./vm.qcow2 --domain ./domain.xml --backup-dir ./backup/
+```
+
+Image checks: qcow2 header, L1/L2 tables, refcount table, backing chain
+(a missing backing file fails the image), and snapshots — the format
+verified against the QEMU spec. Raw images are checked for partition and
+filesystem signatures (MBR, GPT, ext4, XFS, NTFS, FAT, LUKS); a blank
+raw image is a warning, not an error. Domain checks: every disk exists,
+the declared driver format matches the detected image format,
+memory/CPU/OS are present, every interface has a source. A `vm` step
+type joins the drill runner. vmdk is not supported yet.
 
 ## S3 protection audit (v0.3)
 

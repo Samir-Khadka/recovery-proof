@@ -219,6 +219,27 @@ def test_k8s_step_validation(tmp_path):
             tmp_path, {"name": "x", "steps": [{"name": "k", "type": "k8s"}]}))
 
 
+def test_vm_step_passes_and_fails(tmp_path):
+    vm_fix = ROOT / "fixtures" / "vm"
+    pb = _playbook()
+    pb["steps"] = [{"name": "vm", "type": "vm",
+                    "image": str(vm_fix / "base.qcow2"),
+                    "domain": str(vm_fix / "domain.xml"),
+                    "backup_dir": str(vm_fix)}]
+    result = run_drill(pb)
+    assert result["verdict"] == "PASS"
+    assert "can be recreated" in result["steps"][0]["detail"]
+
+    pb["steps"] = [{"name": "vm", "type": "vm",
+                    "image": str(vm_fix / "truncated.qcow2")}]
+    result = run_drill(pb)
+    assert result["verdict"] == "FAIL"
+
+    with pytest.raises(DrillError, match="needs 'image' or 'domain'"):
+        load_playbook(_write_playbook(
+            tmp_path, {"name": "x", "steps": [{"name": "v", "type": "vm"}]}))
+
+
 # ------------------------------------------------------------ CLI + reports
 def test_drill_cli_exit_codes_and_history(tmp_path, monkeypatch, capsys):
     drills = tmp_path / "drills.jsonl"

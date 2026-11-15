@@ -32,6 +32,8 @@ Step types:
   is >= min_score (default 60).
 - k8s: verify a K8s workload can be restored (manifests and/or a Velero
   backup). Passes when the verifier reports OK.
+- vm: verify a VM backup can be restored (disk image and/or a libvirt
+  domain XML). Passes when the verifier reports OK.
 - shell: run a command; passes on exit code 0. Playbooks are trusted local
   files — the runner executes what you wrote, and never downloads or
   fetches a playbook.
@@ -59,7 +61,7 @@ EXIT_PASS = 0
 EXIT_FAIL = 1
 EXIT_INFRA = 2
 
-STEP_TYPES = {"restore", "audit", "clean-point", "score", "k8s", "shell", "wait"}
+STEP_TYPES = {"restore", "audit", "clean-point", "score", "k8s", "vm", "shell", "wait"}
 DEFAULT_STEP_TIMEOUT_S = 600
 DEFAULT_MIN_SCORE = 60
 
@@ -143,6 +145,9 @@ def _validate_step(step: dict, index: int) -> None:
     elif stype == "k8s":
         if not step.get("manifests") and not step.get("velero"):
             raise DrillError(f"{where}: a k8s step needs 'manifests' or 'velero'")
+    elif stype == "vm":
+        if not step.get("image") and not step.get("domain"):
+            raise DrillError(f"{where}: a vm step needs 'image' or 'domain'")
     elif stype == "shell":
         if not isinstance(step.get("command"), str) or not step["command"].strip():
             raise DrillError(f"{where}: a shell step needs a non-empty 'command'")
@@ -256,12 +261,34 @@ def _run_k8s(step: dict, playbook: dict) -> tuple[bool, str]:
     return False, "; ".join(errors[:3]) or "K8s verification failed"
 
 
+def _run_vm(step: dict, playbook: dict) -> tuple[bool, str]:
+    from .vm import run_vm
+    try:
+        result = run_vm(
+            Path(step["image"]) if step.get("image") else None,
+            Path(step["domain"]) if step.get("domain") else None,
+            Path(step["backup_dir"]) if step.get("backup_dir") else None)
+    except ValueError as e:
+        return False, f"vm error: {e}"
+    if result["ok"]:
+        return True, "VM can be recreated from this backup"
+    errors = []
+    for part in ("image", "domain"):
+        if result[part]:
+            errors += [f["detail"] for f in result[part]["findings"]
+                       if f["severity"] == "error"]
+    errors += [f["detail"] for f in result["cross_check"]
+               if f["severity"] == "error"]
+    return False, "; ".join(errors[:3]) or "VM verification failed"
+
+
 _STEP_RUNNERS = {
     "restore": _run_restore,
     "audit": _run_audit,
     "clean-point": _run_clean_point,
     "score": _run_score,
     "k8s": _run_k8s,
+    "vm": _run_vm,
     "shell": _run_shell,
     "wait": _run_wait,
 }

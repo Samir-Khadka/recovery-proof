@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.8.0 — 2026-11-15
+
+- VM restore verification (`recovery-proof vm`, Phase 6 — VM): no
+  hypervisor needed. `--image` inspects a disk image — qcow2 (header,
+  L1/L2 tables, refcount table, backing chain, snapshots; format verified
+  against the QEMU spec, docs/specs/qcow2.txt) or raw (partition and
+  filesystem signatures: MBR, GPT, ext4, XFS, NTFS, FAT, LUKS). `--domain`
+  verifies a libvirt domain XML — disks exist, the declared driver format
+  matches the detected image format, memory/CPU/OS are present, every
+  interface has a source. With both, the cross-check confirms the domain
+  uses the image and warns about unreferenced images in the backup
+  directory. Findings are errors (block a restore) or warnings; a blank
+  raw image is a warning, not an error. A `vm` step type joins the drill
+  runner (8 step types). vmdk is not supported yet. Fixtures are generated
+  deterministically by `scripts/make_vm_fixtures.py` (a minimal but
+  structurally valid qcow2, built to the spec).
+- 194 unit tests + 3 real-Docker tests.
+
 ## 0.7.0 — 2026-11-15
 
 - Kubernetes restore verification (`recovery-proof k8s`, Phase 6 — K8s):
