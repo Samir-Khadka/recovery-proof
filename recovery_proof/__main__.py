@@ -33,6 +33,8 @@ def build_parser() -> argparse.ArgumentParser:
                    add_help=False)
     sub.add_parser("clean-point", help="score restore points for ransomware signs",
                    add_help=False)
+    sub.add_parser("drill", help="run a recovery drill from a YAML runbook",
+                   add_help=False)
     report_p = sub.add_parser("report", help="measured recovery time from the results history")
     report_p.add_argument("--system", default=None,
                           help="label to report on (default: all systems)")
@@ -62,6 +64,9 @@ def main(argv=None) -> int:
     if argv and argv[0] == "clean-point":
         from .cleanpoint import clean_point_main
         return clean_point_main(argv[1:])
+    if argv and argv[0] == "drill":
+        from .drill import drill_main
+        return drill_main(argv[1:])
     args = build_parser().parse_args(argv)
     if args.command == "report":
         try:

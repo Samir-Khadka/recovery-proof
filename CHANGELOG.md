@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.6.0 — 2026-11-15
+
+- Drills and runbooks (`recovery-proof drill --playbook drill.yaml`, Phase 5):
+  runnable YAML playbooks with six step types — restore (the restore
+  checker), audit (the S3 protection audit), clean-point, score, shell,
+  wait. A drill runs the steps in order and produces a pass/fail scorecard
+  that names the **measured recovery time vs the declared RTO** (the time
+  spent in restore steps, not the whole drill). PASS needs every step to
+  pass AND the measured RTO within the declared one; a failed step stops
+  the drill unless `continue_on_failure` is set. Scheduling is the user's
+  cron (`0 2 * * 0 recovery-proof drill --playbook drill.yaml`), not a
+  built-in daemon. Results record to `~/.recovery-proof/drills.jsonl`;
+  Telegram + Slack are notified once at the end. `--dry-run` validates a
+  playbook without executing it; `--format md` is the auditor-readable
+  report. `drill.example.yaml` shows the shape. To make the step types
+  callable, `audit.run_audit` and `cleanpoint.run_clean_point` were
+  extracted from their CLIs (no behaviour change).
+- 158 unit tests + 3 real-Docker tests.
+
 ## 0.5.0 — 2026-11-15
 
 - Clean-point detection (`recovery-proof clean-point <point>...`, Phase 4):

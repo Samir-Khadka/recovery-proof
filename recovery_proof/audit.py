@@ -313,6 +313,15 @@ def audit_bucket(cfg: dict, s3, iam, sts) -> dict:
 
 
 # ---------------------------------------------------------------- CLI
+def run_audit(cfg: dict, profile: str | None = None,
+              region: str | None = None,
+              endpoint_url: str | None = None) -> dict:
+    """Build the AWS clients and run the audit. Returns the result dict.
+    (The drill runner calls this directly; the CLI wraps it in audit_main.)"""
+    s3, iam, sts = build_clients(profile, region or cfg.get("region"), endpoint_url)
+    return audit_bucket(cfg, s3, iam, sts)
+
+
 def parse_audit_args(argv=None) -> argparse.Namespace:
     ap = argparse.ArgumentParser(description="Recovery Proof S3 protection audit")
     ap.add_argument("--config", type=Path, required=True,
@@ -361,8 +370,7 @@ def audit_main(argv=None) -> int:
     if args.region:
         cfg["region"] = args.region
     try:
-        s3, iam, sts = build_clients(args.profile, cfg.get("region"), args.endpoint_url)
-        result = audit_bucket(cfg, s3, iam, sts)
+        result = run_audit(cfg, args.profile, cfg.get("region"), args.endpoint_url)
     except AuditError as e:
         log.error("audit error: %s", e)
         return EXIT_INFRA

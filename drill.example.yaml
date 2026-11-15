@@ -1,0 +1,41 @@
+# Recovery drill runbook — Recovery Proof v0.6 (Phase 5)
+#
+# Run it:  recovery-proof drill --playbook drill.example.yaml
+# Validate only:  recovery-proof drill --playbook drill.example.yaml --dry-run
+# Schedule it (weekly, Sunday 02:00):
+#   0 2 * * 0 recovery-proof drill --playbook /path/to/drill.yaml
+#
+# Steps run in order. A failed step stops the drill unless
+# continue_on_failure is set. The verdict is PASS only when every step
+# passes AND the measured recovery time (time in restore steps) is within
+# the declared RTO below.
+name: nightly postgres drill
+system: nightly
+rto_seconds: 900
+
+steps:
+  # Restore the latest backup into an ephemeral container and run the checks.
+  - name: restore the latest backup
+    type: restore
+    dump: fixtures/demo.sql
+    checks: checks.example.yaml
+    engine: postgres
+
+  # Score the recent restore points for ransomware signs.
+  - name: check the clean point
+    type: clean-point
+    points:
+      - fixtures/clean-point/clean
+      - fixtures/clean-point/clean2
+    canaries: fixtures/clean-point/canaries.yaml
+
+  # Readiness score for the system — passes at 60/100 (grade D) or better.
+  - name: readiness score
+    type: score
+    system: nightly
+    min_score: 60
+
+  # A shell step: anything the drill needs around the product's own steps.
+  - name: health check placeholder
+    type: shell
+    command: "true"

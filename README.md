@@ -115,6 +115,45 @@ database points), asserted by the test suite over the fixtures in
 `fixtures/clean-point/` (generated deterministically by
 `scripts/make_cleanpoint_fixtures.py`).
 
+## Drills and runbooks (v0.6)
+
+A drill proves you can recover in time, not just that the steps run. A
+runbook is a YAML playbook of steps; a drill executes it and produces a
+pass/fail scorecard that names the measured recovery time vs the declared
+RTO:
+
+```bash
+recovery-proof drill --playbook drill.yaml            # run it
+recovery-proof drill --playbook drill.yaml --dry-run  # validate only
+recovery-proof drill --playbook drill.yaml --format md --output drill.md
+```
+
+```yaml
+name: nightly postgres drill
+system: nightly
+rto_seconds: 900
+steps:
+  - name: restore the latest backup
+    type: restore
+    dump: backups/latest.dump
+    checks: checks.yaml
+  - name: check the clean point
+    type: clean-point
+    points: [backups/2026-11-10, backups/2026-11-11]
+  - name: readiness score
+    type: score
+    min_score: 60
+```
+
+Six step types: `restore`, `audit`, `clean-point`, `score`, `shell`,
+`wait`. A failed step stops the drill unless `continue_on_failure` is
+set. The verdict is PASS only when every step passes AND the measured
+recovery time — the time spent in restore steps, not the whole drill — is
+within the declared RTO. Results record to
+`~/.recovery-proof/drills.jsonl`, and Telegram + Slack are notified once
+at the end. Scheduling is your cron, not a built-in daemon:
+`0 2 * * 0 recovery-proof drill --playbook drill.yaml`.
+
 ## S3 protection audit (v0.3)
 
 ```bash

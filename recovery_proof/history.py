@@ -28,6 +28,10 @@ def default_audit_results_path() -> Path:
     return Path.home() / ".recovery-proof" / "audit.jsonl"
 
 
+def default_drills_path() -> Path:
+    return Path.home() / ".recovery-proof" / "drills.jsonl"
+
+
 def append_result(path: Path, result: dict) -> bool:
     """Append one result as a JSON line. Returns False (never raises)."""
     try:

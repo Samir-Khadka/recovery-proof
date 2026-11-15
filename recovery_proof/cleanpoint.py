@@ -303,6 +303,39 @@ def recommend(points: list[dict]) -> dict:
 
 
 # ---------------------------------------------------------------- CLI
+def run_clean_point(points: list[Path], canaries: list[dict] | None = None,
+                    threshold: int = FLAG_THRESHOLD) -> dict:
+    """Score a list of restore points and recommend the last clean point.
+    Returns {"heuristics_version", "threshold", "points", "recommendation"}.
+    (The drill runner calls this directly; the CLI wraps it in
+    clean_point_main.) Raises ValueError for a missing point or a mixed
+    list of file directories and .sql dumps."""
+    canaries = canaries or []
+    kinds = set()
+    for p in points:
+        if not p.exists():
+            raise ValueError(f"restore point not found: {p}")
+        kinds.add("database" if p.is_file() and p.suffix.lower() == ".sql" else "files")
+    if len(kinds) > 1:
+        raise ValueError("do not mix file directories and .sql dumps in one run")
+    kind = kinds.pop()
+    scored: list[dict] = []
+    previous = None
+    for p in points:
+        if kind == "database":
+            scored.append(score_db_point(p, previous))
+        else:
+            scored.append(score_file_point(p, previous, canaries))
+        previous = scored[-1]["files"]
+        scored[-1]["flagged"] = scored[-1]["score"] >= threshold
+    for s in scored:
+        s.pop("files", None)
+    return {"heuristics_version": HEURISTICS_VERSION,
+            "threshold": threshold,
+            "points": scored,
+            "recommendation": recommend(scored)}
+
+
 def parse_clean_point_args(argv=None) -> argparse.Namespace:
     ap = argparse.ArgumentParser(
         description="Score restore points for ransomware signs and recommend "
@@ -354,33 +387,11 @@ def clean_point_main(argv=None) -> int:
     except (ValueError, FileNotFoundError, KeyError) as e:
         log.error("canaries error: %s", e)
         return EXIT_INFRA
-    kinds = set()
-    for p in args.points:
-        if not p.exists():
-            log.error("restore point not found: %s", p)
-            return EXIT_INFRA
-        kinds.add("database" if p.is_file() and p.suffix.lower() == ".sql" else "files")
-    if len(kinds) > 1:
-        log.error("do not mix file directories and .sql dumps in one run")
+    try:
+        result = run_clean_point(args.points, canaries, args.threshold)
+    except ValueError as e:
+        log.error("%s", e)
         return EXIT_INFRA
-    kind = kinds.pop()
-    scored: list[dict] = []
-    previous = None
-    for p in args.points:
-        if kind == "database":
-            scored.append(score_db_point(p, previous))
-        else:
-            scored.append(score_file_point(p, previous, canaries))
-        previous = scored[-1]["files"]
-        # The flag threshold is configurable; re-evaluate after scoring.
-        scored[-1]["flagged"] = scored[-1]["score"] >= args.threshold
-    # Strip the internal file maps from the output.
-    for s in scored:
-        s.pop("files", None)
-    result = {"heuristics_version": HEURISTICS_VERSION,
-              "threshold": args.threshold,
-              "points": scored,
-              "recommendation": recommend(scored)}
     if args.format == "json":
         out = json.dumps(result, indent=2) + "\n"
     else:
